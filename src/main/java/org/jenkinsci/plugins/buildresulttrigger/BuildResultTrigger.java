@@ -12,8 +12,10 @@ import hudson.util.SequentialExecutionQueue;
 import jenkins.model.Jenkins;
 import org.acegisecurity.context.SecurityContext;
 import org.acegisecurity.context.SecurityContextHolder;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.jelly.XMLOutput;
 import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang.exception.ExceptionUtils;
 import org.jenkinsci.lib.xtrigger.AbstractTriggerByFullContext;
 import org.jenkinsci.lib.xtrigger.XTriggerDescriptor;
 import org.jenkinsci.lib.xtrigger.XTriggerException;
@@ -25,11 +27,7 @@ import org.kohsuke.stapler.DataBoundConstructor;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.Charset;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Level;
@@ -207,6 +205,9 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
                                       BuildResultTriggerContext newContext,
                                       XTriggerLog log)
             throws XTriggerException {
+
+        oldContext = syncWithDisk(oldContext, newContext, log);
+
         SecurityContext securityContext = ACL.impersonate(ACL.SYSTEM);
         try {
 
@@ -293,7 +294,120 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         return false;
     }
 
-    private boolean isMatchingExpectedResults(String jobName, CheckedResult[] expectedResults, XTriggerLog log, Integer buildId) {
+    private BuildResultTriggerContext syncWithDisk(BuildResultTriggerContext oldContext,
+                                                   BuildResultTriggerContext newContext, XTriggerLog log) {
+        BuildResultTriggerContext diskContext = loadContext(log);
+        saveContext(newContext, log);
+        return mergeContexts(oldContext, diskContext);
+    }
+
+    //Merge disk and memory contexts, use memory build number unless disk build number is lower
+    private BuildResultTriggerContext mergeContexts(BuildResultTriggerContext memoryContext,
+                                                    BuildResultTriggerContext diskContext) {
+        Map<String, Integer> map = new HashMap<String, Integer>();
+        Map<String, Integer> memoryMap = memoryContext.getResults();
+        Map<String, Integer> diskMap = diskContext.getResults();
+
+        for (Map.Entry<String, Integer> memoryEntry : memoryMap.entrySet()) {
+            Integer memoryBuildNumber = Integer.valueOf(memoryEntry.getValue());
+            Integer diskBuildNumber = diskMap.get(memoryEntry.getKey());
+            if (diskBuildNumber != null && diskBuildNumber < memoryBuildNumber) {
+                map.put(memoryEntry.getKey(), diskBuildNumber);
+            } else {
+                map.put(memoryEntry.getKey(), memoryBuildNumber);
+            }
+        }
+
+        return new BuildResultTriggerContext(map);
+    }
+
+    private void saveContext(BuildResultTriggerContext context, XTriggerLog log) {
+        if (context != null && context.getResults() != null && context.getResults().size() > 0) {
+            File mapFile = getBuildsMapFile();
+            if (mapFile != null) {
+                ArrayList<String> lines = new ArrayList<String>();
+                for (Map.Entry<String, Integer> entry : context.getResults().entrySet()) {
+                    lines.add(String.format("%s,%s", entry.getKey(), entry.getValue()));
+                }
+                try {
+                    FileUtils.writeLines(mapFile, lines);
+                } catch (IOException e) {
+                    if (log != null) {
+                        log.error(String.format("Failed to write monitored build results to disk. File: %s", mapFile.getAbsolutePath()));
+                        log.error(ExceptionUtils.getStackTrace(e));
+                    }
+                }
+            } else {
+                if (log != null) log.error("Could not save monitored build results to disk, unable to calculate job directory.");
+            }
+        }
+    }
+
+    private BuildResultTriggerContext loadContext(XTriggerLog log) {
+        Map<String, Integer> map = new HashMap<String, Integer>();
+        File mapFile = getBuildsMapFile();
+        if (mapFile != null) {
+            if (mapFile.exists()) {
+                List<String> lines = null;
+                try {
+                    lines = FileUtils.readLines(mapFile);
+                } catch (IOException e) {
+                    if (log != null) {
+                        log.error(String.format("Failed to read monitored build results from disk. File: %s", mapFile.getAbsolutePath()));
+                        log.error(ExceptionUtils.getStackTrace(e));
+                    }
+                }
+                if (lines != null) {
+                    for (String line : lines) {
+                        String[] segments = line.split(",");
+                        if (segments.length == 2) {
+                            map.put(segments[0], Integer.valueOf(segments[1]));
+                        } else {
+                            if (log != null) {
+                                log.error("Monitored build results file has invalid content:");
+                                log.error(String.format("  File: %s", mapFile.getAbsolutePath()));
+                                log.error(String.format("  Invalid line: \"%s\"", line));
+                                log.error("Skipping line.");
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            log.error("Could not read monitored build results from disk, unable to calculate job directory.");
+        }
+        return new BuildResultTriggerContext(map);
+    }
+
+    private void renameJobInSavedContext(String oldName, String newName) {
+        BuildResultTriggerContext context = loadContext(null);
+        if (context != null && context.getResults() != null) {
+            Map<String, Integer> results = context.getResults();
+            if (results != null) {
+                Integer value = results.get(oldName);
+                if (value != null) {
+                    results.remove(oldName);
+                    results.put(newName, value);
+                }
+            }
+            saveContext(new BuildResultTriggerContext(results), null);
+        }
+    }
+
+    private File getBuildsMapFile() {
+        return job != null && job.getRootDir() != null
+                ? new File(job.getRootDir(), "buildResultTrigger-build-records.csv") : null;
+    }
+
+    private void logContext(String contextName, BuildResultTriggerContext context, XTriggerLog log) {
+        log.info(String.format("Context name: %s", contextName));
+        for (Map.Entry<String, Integer> entry : context.getResults().entrySet()) {
+            log.info(String.format("  %s : %s", entry.getKey(), entry.getValue()));
+        }
+    }
+
+    private boolean isMatchingExpectedResults(String jobName, CheckedResult[] expectedResults, XTriggerLog log,
+                                              Integer buildId) {
         log.info(String.format("Checking expected job build results for the job %s.", jobName));
 
         if (expectedResults == null || expectedResults.length == 0) {
@@ -325,6 +439,7 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         for (BuildResultTriggerInfo b : jobsInfo) {
             result &= b.onJobRenamed(fullOldName, fullNewName);
         }
+        renameJobInSavedContext(fullOldName, fullNewName);
         return result;
     }
 
