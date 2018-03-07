@@ -206,7 +206,12 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
                                       XTriggerLog log)
             throws XTriggerException {
 
+        logContext("newContext", newContext, log);              //TODO - Remove, debugging only
+        logContext("oldContext (before)", oldContext, log);     //TODO - Remove, debugging only
+
         oldContext = syncWithDisk(oldContext, newContext, log);
+
+        logContext("oldContext (after)", oldContext, log);      //TODO - Remove, debugging only
 
         SecurityContext securityContext = ACL.impersonate(ACL.SYSTEM);
         try {
