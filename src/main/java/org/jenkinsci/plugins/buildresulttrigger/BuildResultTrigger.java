@@ -58,6 +58,12 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
     }
 
     @Override
+    protected void start(Node pollingNode, BuildableItem project, boolean newInstance, XTriggerLog log) throws XTriggerException {
+        log.info("START: " + new Date());
+        loadOrWriteContext(log);
+    }
+
+    @Override
     public File getLogFile() {
         if (job == null) {
             return new File("buildResultTrigger-polling.log");
@@ -201,12 +207,8 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
     }
 
     @Override
-    protected boolean checkIfModified(BuildResultTriggerContext oldContext,
-                                      BuildResultTriggerContext newContext,
-                                      XTriggerLog log)
-            throws XTriggerException {
-
-        oldContext = syncWithDisk(oldContext, newContext, log);
+    protected boolean checkIfModified(BuildResultTriggerContext oldContext, BuildResultTriggerContext newContext,
+                                      XTriggerLog log) throws XTriggerException {
 
         SecurityContext securityContext = ACL.impersonate(ACL.SYSTEM);
         try {
@@ -294,33 +296,6 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         return false;
     }
 
-    private BuildResultTriggerContext syncWithDisk(BuildResultTriggerContext oldContext,
-                                                   BuildResultTriggerContext newContext, XTriggerLog log) {
-        BuildResultTriggerContext diskContext = loadContext(log);
-        saveContext(newContext, log);
-        return mergeContexts(oldContext, diskContext);
-    }
-
-    //Merge disk and memory contexts, use memory build number unless disk build number is lower
-    private BuildResultTriggerContext mergeContexts(BuildResultTriggerContext memoryContext,
-                                                    BuildResultTriggerContext diskContext) {
-        Map<String, Integer> map = new HashMap<String, Integer>();
-        Map<String, Integer> memoryMap = memoryContext.getResults();
-        Map<String, Integer> diskMap = diskContext.getResults();
-
-        for (Map.Entry<String, Integer> memoryEntry : memoryMap.entrySet()) {
-            Integer memoryBuildNumber = Integer.valueOf(memoryEntry.getValue());
-            Integer diskBuildNumber = diskMap.get(memoryEntry.getKey());
-            if (diskBuildNumber != null && diskBuildNumber < memoryBuildNumber) {
-                map.put(memoryEntry.getKey(), diskBuildNumber);
-            } else {
-                map.put(memoryEntry.getKey(), memoryBuildNumber);
-            }
-        }
-
-        return new BuildResultTriggerContext(map);
-    }
-
     private void saveContext(BuildResultTriggerContext context, XTriggerLog log) {
         if (context != null && context.getResults() != null && context.getResults().size() > 0) {
             File mapFile = getBuildsMapFile();
@@ -377,6 +352,28 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
             log.error("Could not read monitored build results from disk, unable to calculate job directory.");
         }
         return new BuildResultTriggerContext(map);
+    }
+
+    private BuildResultTriggerContext loadOrWriteContext(XTriggerLog log) throws XTriggerException {
+        BuildResultTriggerContext diskContext = loadContext(log);
+        if (diskContext != null) {
+            return diskContext;
+        } else {
+            BuildResultTriggerContext newContext = getContext(log);
+            saveContext(newContext, log);
+            return newContext;
+        }
+    }
+
+    @Override
+    protected BuildResultTriggerContext getStoredContext(XTriggerLog log) throws XTriggerException {
+        log.info("GET_STORED_CONTEXT: " + new Date());
+        BuildResultTriggerContext memoryContext = getInMemoryContext();
+        if (memoryContext != null) {
+            return memoryContext;
+        } else {
+            return loadOrWriteContext(log);
+        }
     }
 
     private void renameJobInSavedContext(String oldName, String newName) {
