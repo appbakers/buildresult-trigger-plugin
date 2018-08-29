@@ -226,7 +226,7 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
                     //Stop at the first modification on the combination mode
                     if (!combinedJobs && modifiedJob) {
                         log.info(String.format("Job %s is modified. Triggering a new build.", jobName));
-                        setNewContext(newContext);
+                        setAndSaveNewContext(newContext, log);
                         return true;
                     }
 
@@ -245,13 +245,13 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
 
             if (combinedJobs && nbCheckedJobs == nbModifiedJobs) {
                 log.info("Combination activated and all jobs has changed. Triggering a new build.");
-                setNewContext(newContext);
+                setAndSaveNewContext(newContext, log);
                 return true;
             } else if (combinedJobs) {
                 resetOldContext(oldContext);
                 return false;
             } else {
-                setNewContext(newContext);
+                setAndSaveNewContext(newContext, log);
                 return false;
             }
 
@@ -354,9 +354,14 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         return new BuildResultTriggerContext(map);
     }
 
+    private void setAndSaveNewContext(BuildResultTriggerContext context, XTriggerLog log) {
+        setNewContext(context);
+        saveContext(context, log);
+    }
+
     private BuildResultTriggerContext loadOrWriteContext(XTriggerLog log) throws XTriggerException {
         BuildResultTriggerContext diskContext = loadContext(log);
-        if (diskContext != null) {
+        if (diskContext != null && diskContext.getResults().size() > 0) {
             return diskContext;
         } else {
             BuildResultTriggerContext newContext = getContext(log);
@@ -367,9 +372,8 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
 
     @Override
     protected BuildResultTriggerContext getStoredContext(XTriggerLog log) throws XTriggerException {
-        log.info("GET_STORED_CONTEXT: " + new Date());
         BuildResultTriggerContext memoryContext = getInMemoryContext();
-        if (memoryContext != null) {
+        if (memoryContext != null && memoryContext.getResults().size() > 0) {
             return memoryContext;
         } else {
             return loadOrWriteContext(log);
