@@ -196,6 +196,11 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         return new BuildResultTriggerContext(contextResults);
     }
 
+    @Override
+    protected BuildResultTriggerContext getContext(Node pollingNode, XTriggerLog log) throws XTriggerException {
+        return getContext(log);
+    }
+
     private boolean isValidBuildResultProject(AbstractProject item) {
         return item != null && !(item instanceof MatrixConfiguration);
     }
