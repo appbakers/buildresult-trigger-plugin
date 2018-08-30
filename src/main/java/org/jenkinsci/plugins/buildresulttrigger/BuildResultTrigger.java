@@ -218,6 +218,10 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
 
             int nbCheckedJobs = 0;
             int nbModifiedJobs = 0;
+
+            log.info(String.format("Found old results %s.", oldContext.getResults()));
+            log.info(String.format("Found new results %s.", newContext.getResults()));
+
             for (BuildResultTriggerInfo info : jobsInfo) {
                 CheckedResult[] expectedResults = info.getCheckedResults();
                 for (String jobName : info.getJobNamesAsArray()) {
@@ -276,22 +280,25 @@ public class BuildResultTrigger extends AbstractTriggerByFullContext<BuildResult
         }
 
         if (newContextResults.size() != oldContextResults.size()) {
+            log.info(String.format("Different number of monitored jobs detected. Old size: %s, New size: %s", oldContextResults.size(), newContextResults.size()));
             return isMatchingExpectedResults(jobName, expectedResults, log, newContextResults.get(jobName));
         }
 
         Integer newLastBuildNumber = newContextResults.get(jobName);
         if (newLastBuildNumber == null || newLastBuildNumber == 0) {
-            log.info(String.format("The job %s doesn't have any new builds.", jobName));
+            log.info("New last build number is null or 0");
             return false;
         }
 
         Integer oldLastBuildNumber = oldContextResults.get(jobName);
         if (oldLastBuildNumber == null || oldLastBuildNumber == 0) {
+            log.info("Old last build number is null or 0");
             return isMatchingExpectedResults(jobName, expectedResults, log, newContextResults.get(jobName));
         }
 
         //Process if there is a new build between now and previous polling
         if (newLastBuildNumber.intValue() != oldLastBuildNumber.intValue()) {
+            log.info(String.format("Difference in build numbers detected. Old build number: %s, New build number: %s", oldLastBuildNumber, newLastBuildNumber));
             return isMatchingExpectedResults(jobName, expectedResults, log, newContextResults.get(jobName));
         }
 
